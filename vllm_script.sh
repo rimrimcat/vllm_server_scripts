@@ -80,6 +80,7 @@ add_models_to_list()
 add_models_to_list $MODEL_PATH
 cd $_pwd
 
+#### FOR PRINTING
 print_models()
 {
     local i
@@ -111,7 +112,18 @@ print_config()
     done < $1
 }
 
-# config file to args
+set_model_in_env()
+{
+    local MODEL="$1"
+
+    if ! grep -q "# set by vllm script" "/home/ubuntu/.bashrc"; then
+        echo "MODEL=$MODEL # set by vllm script" >> "/home/ubuntu/.bashrc"
+    else
+        sed -i "s|MODEL=.*|MODEL=$MODEL # set by vllm script|g" "/home/ubuntu/.bashrc"
+    fi
+}
+
+#### FOR RUNNING
 config_opts()
 {
     local line
@@ -125,7 +137,25 @@ config_opts()
     echo "$opts"
 }
 
-###############
+serve_model()
+{
+    local model_path="$1"
+    local config_path="$2"
+    local options
+
+    export MODEL="$model_path"
+    trap "unset MODEL" EXIT
+
+    options=$(config_opts "$config_path")
+
+    if [[ -z $options ]]; then
+        vllm serve "$model_path" | tee log
+    else
+        vllm serve "$model_path" $options | tee log
+    fi
+}
+
+#### INTERACTIVE
 start()
 {
     trap "exit" SIGINT
@@ -198,18 +228,9 @@ finalize_serve()
         case $sel in
             Serve)
                 trap "exit" SIGINT
-                trap "unset MODEL" EXIT
 
-                export MODEL="$model_path"
-                options=$(config_opts "$config_path")
-
-                if [[ -z $options ]]; then
-                    echo "Will use no option"
-                    vllm serve "$model_path" | tee log
-                else
-                    echo "Will use option"
-                    vllm serve "$model_path" $options | tee log
-                fi
+                set_model_in_env "$model_path"
+                serve_model "$model_path" "$config_path"
 
                 exit
                 ;;
@@ -221,4 +242,29 @@ finalize_serve()
     done
 }
 
-start
+if [[ $1 == "" ]]; then
+    # interactive mode if no args
+
+    start
+else
+
+    SEL=$(echo ${MODEL_NAMES[@]} | tr ' ' '\n' | fzf --query "$1" --select-1 --exit-0)
+    ind=$(echo "${MODEL_NAMES[@]}" | tr ' ' '\n' | grep -n "^$SEL$" | cut -d: -f1)
+    ind=$((ind - 1))
+
+    model_path=${MODEL_PATHS[$ind]}
+    config_path=$(config_of "$SEL")
+    options=$(config_opts "$config_path")
+    set_model_in_env "$model_path"
+
+    tmux new-session -d -s vllm
+    if [[ -z $options ]]; then
+        tmux_cmd="vllm serve $model_path | tee log"
+    else
+        tmux_cmd="vllm serve $model_path $options | tee log"
+    fi
+    tmux send-keys -t vllm "$tmux_cmd" C-m
+
+    echo "Ran command: $tmux_cmd"
+    echo "Attach to tmux session with 'tmux attach -t vllm'"
+fi
