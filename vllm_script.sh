@@ -132,14 +132,25 @@ set_model_in_env()
 #### FOR RUNNING
 config_opts()
 {
+    local option_file="$1"
+    local escape_quotes="$2"
+
     local line
+    local opts
     opts=""
 
     while read line; do
         if [[ -n $line ]]; then
-            opts="$opts --$line"
+            # Escape double quotes and append the option
+            # opts="$opts --$line"
+            if [[ -n $escape_quotes ]]; then
+                escaped_line=$(printf '%s' "$line" | sed 's/"/\\"/g')
+                opts="$opts --$escaped_line"
+            else
+                opts="$opts --$line"
+            fi
         fi
-    done < "$1"
+    done < "$option_file"
     echo "$opts"
 }
 
@@ -169,9 +180,9 @@ serve_model()
         fi
     else
         if [[ -z $options ]]; then
-            vllm serve "$model_path" | tee "$LOG_FILE"
+            vllm serve "$model_path" $common_options | tee "$LOG_FILE"
         else
-            vllm serve "$model_path" $options | tee "$LOG_FILE"
+            vllm serve "$model_path" $options $common_options | tee "$LOG_FILE"
         fi
     fi
 }
@@ -242,7 +253,6 @@ finalize_serve()
     trap "select_model" SIGINT
     clear
     local sel
-    local options
     local model_name=${MODEL_NAMES[$SELECTED_MODEL]}
     local model_path=${MODEL_PATHS[$SELECTED_MODEL]}
     local config_path=$(config_of "$model_name")
@@ -292,22 +302,19 @@ else
 
     model_path=${MODEL_PATHS[$ind]}
     config_path=$(config_of "$SEL")
-    options=$(config_opts "$config_path")
-    common_options=$(config_opts "$COMMON_CONFIG_PATH")
+    options=$(config_opts "$config_path" "yes")
+    common_options=$(config_opts "$COMMON_CONFIG_PATH" "yes")
     set_model_in_env "$model_path"
 
     tmux new-session -d -s vllm
 
     tmux_cmd="vllm serve $model_path"
-    echo "Models-specific options: $options"
     if [[ -n $options ]]; then
-        echo "Appending model-specific options..."
         tmux_cmd+=" $options"
     fi
 
     echo "Common options: $common_options"
     if [[ -n $common_options ]]; then
-        echo "Appending common options..."
         tmux_cmd+=" $common_options"
     fi
 
