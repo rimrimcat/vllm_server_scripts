@@ -188,6 +188,67 @@ class Local:
         ).json()
 
 
+class Locurl:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str = "",
+        content_type_header_only: bool = False,
+    ) -> None:
+        self.BASE_URL = base_url
+        self.API_KEY = api_key
+
+        if content_type_header_only:
+            self.HEADER = '"Content-Type: application/json"'
+        else:
+            self.HEADER = default_headers(api_key)
+
+        self.ENDPOINTS = default_endpoints(base_url)
+
+    def text_completion(self, **kwargs: Unpack[TextCompletionParams]):
+        if isinstance(self.HEADER, dict):
+            hdr = "'" + json.dumps(self.HEADER) + "'"
+        else:
+            hdr = self.HEADER
+
+        return [
+            "curl",
+            self.ENDPOINTS["chat_completion"],
+            "-H",
+            hdr,
+            "-d",
+            "'" + json.dumps(kwargs) + "'",
+        ]
+
+    def chat_completion(self, **kwargs: Unpack[ChatCompletionParams]) -> list[str]:
+        if isinstance(self.HEADER, dict):
+            hdr = "'" + json.dumps(self.HEADER) + "'"
+        else:
+            hdr = self.HEADER
+
+        return [
+            "curl",
+            self.ENDPOINTS["chat_completion"],
+            "-H",
+            hdr,
+            "-d",
+            "'" + json.dumps(kwargs) + "'",
+        ]
+
+    def generation(self, id: str):
+        return requests.get(
+            self.ENDPOINTS["generation"],
+            headers=self.HEADER,
+            data=json.dumps({"id": id}),
+        ).json()
+
+    def models(self) -> list[str]:
+        return [
+            "curl",
+            self.ENDPOINTS["models"],
+        ]
+
+
 class OpenAI(Base):
     BASE_URL: str = "https://api.openai.com/v1"
     API_KEY: str = OPENAI_API_KEY

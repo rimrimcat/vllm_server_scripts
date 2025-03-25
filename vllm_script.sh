@@ -3,10 +3,16 @@
 # Variables
 MODEL_PATH="/home/ubuntu/models"
 CONFIG_PATH="/home/ubuntu/configs"
-VALID_ARGS_PATH="/home/ubuntu/vllm_server_scripts/VLLM_VALID_ARGS.txt"
+COMMON_CONFIG_PATH="/home/ubuntu/vllm_server_scripts/common.conf"
+
+VALID_ARGS_FILE="/home/ubuntu/vllm_server_scripts/VLLM_VALID_ARGS.txt"
+LOG_FILE="/home/ubuntu/vllm.log"
 # TODO: LOG PATH
 
-# Create path if not exists
+# Create file/path if not exists
+if [[ ! -f $COMMON_CONFIG_PATH ]]; then
+    touch $COMMON_CONFIG_PATH
+fi
 mkdir -p $MODEL_PATH
 mkdir -p $CONFIG_PATH
 
@@ -103,7 +109,7 @@ print_config()
     while read line; do
 
         name=$(echo "$line" | cut -d' ' -f1)
-        grep -q "$name" "$VALID_ARGS_PATH"
+        grep -q "$name" "$VALID_ARGS_FILE"
 
         if [ $? -ne 0 ]; then
             line="$line (UNKNOWN ARGUMENT!!!)"
@@ -130,7 +136,7 @@ config_opts()
     opts=""
 
     while read line; do
-        if [[ -z $options ]]; then
+        if [[ -n $line ]]; then
             opts="$opts --$line"
         fi
     done < "$1"
@@ -147,11 +153,26 @@ serve_model()
     trap "unset MODEL" EXIT
 
     options=$(config_opts "$config_path")
+    common_options=$(config_opts "$COMMON_CONFIG_PATH")
 
-    if [[ -z $options ]]; then
-        vllm serve "$model_path" | tee log
+    # if [[ -z $options ]]; then
+    #     vllm serve "$model_path" | tee "$LOG_FILE"
+    # else
+    #     vllm serve "$model_path" $options | tee "$LOG_FILE"
+    # fi
+
+    if [[ $NO_LOG == "yes" ]]; then
+        if [[ -z $options ]]; then
+            vllm serve "$model_path" $common_options
+        else
+            vllm serve "$model_path" $options $common_options
+        fi
     else
-        vllm serve "$model_path" $options | tee log
+        if [[ -z $options ]]; then
+            vllm serve "$model_path" | tee "$LOG_FILE"
+        else
+            vllm serve "$model_path" $options | tee "$LOG_FILE"
+        fi
     fi
 }
 
@@ -163,8 +184,12 @@ start()
 
     local sel
 
+    echo "Common Settings:"
+    print_config "$COMMON_CONFIG_PATH"
+    echo ""
+
     echo "Select action"
-    select sel in "Serve" "Download"; do
+    select sel in "Serve" "Download" "Edit Common Config"; do
         case $sel in
             Serve)
                 select_model
@@ -172,6 +197,11 @@ start()
                 ;;
             Download)
                 echo "Not implemented yet (use dl.py instead)"
+                break
+                ;;
+            "Edit Common Config")
+                vi $COMMON_CONFIG_PATH
+                start
                 break
                 ;;
         esac
@@ -219,7 +249,7 @@ finalize_serve()
 
     # Show config
     echo "Model: $model_name"
-    echo "Settings:"
+    echo "Model-specific Settings:"
     print_config "$config_path"
 
     echo ""
@@ -242,6 +272,14 @@ finalize_serve()
     done
 }
 
+# Other args
+# TODO: detect if invalid argument is passed
+if [[ $1 == "--no-log" ]]; then
+    NO_LOG=yes
+    shift
+
+fi
+
 if [[ $1 == "" ]]; then
     # interactive mode if no args
 
@@ -255,14 +293,28 @@ else
     model_path=${MODEL_PATHS[$ind]}
     config_path=$(config_of "$SEL")
     options=$(config_opts "$config_path")
+    common_options=$(config_opts "$COMMON_CONFIG_PATH")
     set_model_in_env "$model_path"
 
     tmux new-session -d -s vllm
-    if [[ -z $options ]]; then
-        tmux_cmd="vllm serve $model_path | tee log"
-    else
-        tmux_cmd="vllm serve $model_path $options | tee log"
+
+    tmux_cmd="vllm serve $model_path"
+    echo "Models-specific options: $options"
+    if [[ -n $options ]]; then
+        echo "Appending model-specific options..."
+        tmux_cmd+=" $options"
     fi
+
+    echo "Common options: $common_options"
+    if [[ -n $common_options ]]; then
+        echo "Appending common options..."
+        tmux_cmd+=" $common_options"
+    fi
+
+    if ! [[ $NO_LOG == "yes" ]]; then
+        tmux_cmd+=" | tee $LOG_FILE"
+    fi
+
     tmux send-keys -t vllm "$tmux_cmd" C-m
 
     echo "Ran command: $tmux_cmd"
